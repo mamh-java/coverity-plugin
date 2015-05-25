@@ -48,17 +48,15 @@ import java.util.*;
 import java.util.logging.Logger;
 
 /**
- * This publisher optionally invokes cov-analyze/cov-analyze-java and
- * cov-commit-defects. Afterwards the latest list of defects is queried from the
- * webservice, filtered, and attached to the build. If defects are found, the
- * build can be flagged as failed and a mail is sent.
+ * This publisher optionally invokes cov-analyze/cov-analyze-java and cov-commit-defects. Afterwards the latest list of
+ * defects is queried from the webservice, filtered, and attached to the build. If defects are found, the build can be
+ * flagged as failed and a mail is sent.
  */
 public class CoverityPublisher extends Recorder {
 
-    private static final Logger logger = Logger
-            .getLogger(CoverityPublisher.class.getName());
+    private static final Logger logger = Logger.getLogger(CoverityPublisher.class.getName());
 
-    // deprecated fields
+    //deprecated fields
     private transient String cimInstance;
     private transient String project;
     private transient String stream;
@@ -68,21 +66,25 @@ public class CoverityPublisher extends Recorder {
      */
     private List<CIMStream> cimStreams;
     /**
-     * Configuration for the invocation assistance feature. Null if this should
-     * not be used.
+     * Configuration for the invocation assistance feature. Null if this should not be used.
      */
     private final InvocationAssistance invocationAssistance;
     /**
      * Should the build be marked as failed if defects are present ?
      */
     private final boolean failBuild;
+
+    /**
+     * Should the build be marked as unstable if defects are present ?
+     */
+    private final boolean unstable;
+
     /**
      * Should the intermediate directory be preserved after each build?
      */
     private final boolean keepIntDir;
     /**
-     * Should defects be fetched after each build? Enabling this prevents the
-     * build from being failed due to defects.
+     * Should defects be fetched after each build? Enabling this prevents the build from being failed due to defects.
      */
     private final boolean skipFetchingDefects;
     /**
@@ -95,16 +97,29 @@ public class CoverityPublisher extends Recorder {
 
     private final ScmOptionBlock scmOptionBlock;
 
+    // Internal variable to notify the Publisher that the build should be marked as unstable 
+    // since we cannot set the build as unstable within the tool handler
+    private boolean unstableBuild;
+
     @DataBoundConstructor
     public CoverityPublisher(List<CIMStream> cimStreams,
-            InvocationAssistance invocationAssistance, boolean failBuild,
-            boolean keepIntDir, boolean skipFetchingDefects, boolean hideChart,
-            CoverityMailSender mailSender, String cimInstance, String project,
-            String stream, DefectFilters defectFilters,
-            TaOptionBlock taOptionBlock, ScmOptionBlock scmOptionBlock) {
+                             InvocationAssistance invocationAssistance,
+                             boolean failBuild,
+                             boolean unstable,
+                             boolean keepIntDir,
+                             boolean skipFetchingDefects,
+                             boolean hideChart,
+                             CoverityMailSender mailSender,
+                             String cimInstance,
+                             String project,
+                             String stream,
+                             DefectFilters defectFilters,
+                             TaOptionBlock taOptionBlock,
+                             ScmOptionBlock scmOptionBlock) {
         this.cimStreams = cimStreams;
         this.invocationAssistance = invocationAssistance;
         this.failBuild = failBuild;
+        this.unstable = unstable;
         this.mailSender = mailSender;
         this.keepIntDir = keepIntDir;
         this.skipFetchingDefects = skipFetchingDefects;
@@ -115,23 +130,22 @@ public class CoverityPublisher extends Recorder {
         this.defectFilters = defectFilters;
         this.taOptionBlock = taOptionBlock;
         this.scmOptionBlock = scmOptionBlock;
-
-        if (isOldDataPresent()) {
+        this.unstableBuild = false;
+        if(isOldDataPresent()) {
             logger.info("Old data format detected. Converting to new format.");
             convertOldData();
         }
     }
 
     private void convertOldData() {
-        CIMStream newcs = new CIMStream(cimInstance, project, stream,
-                defectFilters, null, null, null);
+        CIMStream newcs = new CIMStream(cimInstance, project, stream, defectFilters, null, null, null);
 
         cimInstance = null;
         project = null;
         stream = null;
         defectFilters = null;
 
-        if (cimStreams == null) {
+        if(cimStreams == null) {
             this.cimStreams = new ArrayList<CIMStream>();
         }
         cimStreams.add(newcs);
@@ -139,27 +153,24 @@ public class CoverityPublisher extends Recorder {
     }
 
     private boolean isOldDataPresent() {
-        return cimInstance != null || project != null || stream != null
-                || defectFilters != null;
+        return cimInstance != null || project != null || stream != null || defectFilters != null;
     }
 
     private void trimInvalidStreams() {
         Iterator<CIMStream> i = getCimStreams().iterator();
-        while (i.hasNext()) {
+        while(i.hasNext()) {
             CIMStream cs = i.next();
-            if (!cs.isValid()) {
+            if(!cs.isValid()) {
                 i.remove();
                 continue;
             }
-            if (cs.getInstance().equals("null")
-                    && cs.getProject().equals("null")
-                    && cs.getStream().equals("null")) {
+            if(cs.getInstance().equals("null") && cs.getProject().equals("null") && cs.getStream().equals("null")) {
                 i.remove();
                 continue;
             }
         }
 
-        // remove duplicates
+        //remove duplicates
         Set<CIMStream> temp = new LinkedHashSet<CIMStream>();
         temp.addAll(cimStreams);
         cimStreams.clear();
@@ -183,7 +194,7 @@ public class CoverityPublisher extends Recorder {
     }
 
     public BuildStepMonitor getRequiredMonitorService() {
-        return BuildStepMonitor.NONE;
+        return BuildStepMonitor.NONE;//为了并发需要改下这个
     }
 
     public InvocationAssistance getInvocationAssistance() {
@@ -206,20 +217,28 @@ public class CoverityPublisher extends Recorder {
         return hideChart;
     }
 
+    public boolean isUnstable(){
+        return unstable;
+    }
+    
+    public boolean isUnstableBuild(){
+            return unstableBuild;
+    }
+
+    public void setUnstableBuild(boolean unstable){
+        unstableBuild = unstable;
+    }
+
     public CoverityMailSender getMailSender() {
         return mailSender;
     }
 
-    public TaOptionBlock getTaOptionBlock() {
-        return taOptionBlock;
-    }
+    public TaOptionBlock getTaOptionBlock(){return taOptionBlock;}
 
-    public ScmOptionBlock getScmOptionBlock() {
-        return scmOptionBlock;
-    }
+    public ScmOptionBlock getScmOptionBlock(){return scmOptionBlock;}
 
     public List<CIMStream> getCimStreams() {
-        if (cimStreams == null) {
+        if(cimStreams == null) {
             return new ArrayList<CIMStream>();
         }
         return cimStreams;
@@ -227,37 +246,35 @@ public class CoverityPublisher extends Recorder {
 
     @Override
     public Action getProjectAction(AbstractProject<?, ?> project) {
-        return hideChart ? super.getProjectAction(project)
-                : new CoverityProjectAction(project);
+        return hideChart ? super.getProjectAction(project) : new CoverityProjectAction(project);
     }
 
     @Override
-    public boolean perform(AbstractBuild<?, ?> build, Launcher launcher,
-            BuildListener listener) throws InterruptedException, IOException {
-        if (isOldDataPresent()) {
+    public boolean perform(AbstractBuild<?, ?> build, Launcher launcher, BuildListener listener) throws InterruptedException, IOException {
+        if(isOldDataPresent()) {
             logger.info("Old data format detected. Converting to new format.");
             convertOldData();
         }
 
-        if (build.getResult().isWorseOrEqualTo(Result.FAILURE))
-            return true;
+        if(build.getResult().isWorseOrEqualTo(Result.FAILURE)) return true;
 
-        CoverityVersion version = CheckConfig.checkNode(this, build, launcher,
-                listener).getVersion();
+        CoverityVersion version = CheckConfig.checkNode(this, build, launcher, listener).getVersion();
 
         CoverityToolHandler cth = CoverityToolHandler.getHandler(version);
-        try {
-            return cth.perform(build, launcher, listener, this);
-        } catch (CovRemoteServiceException_Exception e) {
-            throw new InterruptedException("Cov Remote Service Error "
-                    + e.getMessage());
+        try{
+            cth.perform(build, launcher, listener, this);
+            
+            if(isUnstableBuild()){
+                build.setResult(Result.UNSTABLE);
+            }
+            return true;
+        } catch(CovRemoteServiceException_Exception e){
+            throw new InterruptedException("Cov Remote Service Error " + e.getMessage());
         }
     }
 
-    public String getLanguage(CIMStream cimStream) throws IOException,
-            CovRemoteServiceException_Exception {
-        String domain = getDescriptor().getInstance(cimStream.getInstance())
-                .getStream(cimStream.getStream()).getLanguage();
+    public String getLanguage(CIMStream cimStream) throws IOException, CovRemoteServiceException_Exception {
+        String domain = getDescriptor().getInstance(cimStream.getInstance()).getStream(cimStream.getStream()).getLanguage();
         return "MIXED".equals(domain) ? cimStream.getLanguage() : domain;
     }
 
@@ -285,8 +302,7 @@ public class CoverityPublisher extends Recorder {
 
         public static List<String> toStrings(ListBoxModel list) {
             List<String> result = new ArrayList<String>();
-            for (ListBoxModel.Option option : list)
-                result.add(option.name);
+            for(ListBoxModel.Option option : list) result.add(option.name);
             return result;
         }
 
@@ -296,8 +312,7 @@ public class CoverityPublisher extends Recorder {
         }
 
         @Override
-        public boolean configure(StaplerRequest req, JSONObject json)
-                throws FormException {
+        public boolean configure(StaplerRequest req, JSONObject json) throws FormException {
             req.bindJSON(this, json);
 
             home = Util.fixEmpty(home);
@@ -315,46 +330,40 @@ public class CoverityPublisher extends Recorder {
             this.home = home;
         }
 
-        public String getJavaCheckers() {
-            return javaCheckers;
-        }
+        public String getJavaCheckers(){return javaCheckers;}
 
         public List<String> getCimJavaCheckers() {
             List<String> checkers = new ArrayList<String>();
             try {
-                for (CIMInstance instance : instances) {
-                    ConfigurationService configurationService = instance
-                            .getConfigurationService();
+                for(CIMInstance instance :instances){
+                    ConfigurationService configurationService = instance.getConfigurationService();
                     CheckerPropertyFilterSpecDataObj checkerPropFilter = new CheckerPropertyFilterSpecDataObj();
                     checkerPropFilter.getDomainList().add("STATIC_JAVA");
-                    List<CheckerPropertyDataObj> checkerPropertyList = configurationService
-                            .getCheckerProperties(checkerPropFilter);
-                    for (CheckerPropertyDataObj checkerProp : checkerPropertyList) {
-                        CheckerSubcategoryIdDataObj checkerSub = checkerProp
-                                .getCheckerSubcategoryId();
-                        if (!checkers.contains(checkerSub.getCheckerName())) {
+                    List<CheckerPropertyDataObj> checkerPropertyList = configurationService.getCheckerProperties(checkerPropFilter);
+                    for(CheckerPropertyDataObj checkerProp : checkerPropertyList){
+                        CheckerSubcategoryIdDataObj checkerSub = checkerProp.getCheckerSubcategoryId();
+                        if(!checkers.contains(checkerSub.getCheckerName())){
                             checkers.add(checkerSub.getCheckerName());
                         }
                     }
                 }
-            } catch (Exception e) {
+            } catch(Exception e) {
             }
             return checkers;
         }
 
         public void setJavaCheckers(String javaCheckers) {
             this.javaCheckers = Util.fixEmpty(javaCheckers);
-            try {
-                this.javaCheckers = IOUtils.toString(getClass()
-                        .getResourceAsStream("java-checkers.txt"));
-            } catch (IOException e) {
+            try{
+                this.javaCheckers = IOUtils.toString(getClass().getResourceAsStream("java-checkers.txt"));
+            }catch(IOException e){
                 logger.info("Failed loading Java Checkers text file.");
             }
         }
 
         public void setCimJavaCheckers(String javaCheckers) {
             this.javaCheckers = Util.fixEmpty(javaCheckers);
-            this.javaCheckers = StringUtils.join(getCimJavaCheckers(), '\n');
+            this.javaCheckers = StringUtils.join(getCimJavaCheckers(),'\n');
         }
 
         public String getCxxCheckers() {
@@ -364,32 +373,28 @@ public class CoverityPublisher extends Recorder {
         public List<String> getCimCxxCheckers() {
             List<String> checkers = new ArrayList<String>();
             try {
-                for (CIMInstance instance : instances) {
-                    ConfigurationService configurationService = instance
-                            .getConfigurationService();
+                for(CIMInstance instance :instances){
+                    ConfigurationService configurationService = instance.getConfigurationService();
                     CheckerPropertyFilterSpecDataObj checkerPropFilter = new CheckerPropertyFilterSpecDataObj();
                     checkerPropFilter.getDomainList().add("STATIC_C");
-                    List<CheckerPropertyDataObj> checkerPropertyList = configurationService
-                            .getCheckerProperties(checkerPropFilter);
-                    for (CheckerPropertyDataObj checkerProp : checkerPropertyList) {
-                        CheckerSubcategoryIdDataObj checkerSub = checkerProp
-                                .getCheckerSubcategoryId();
-                        if (!checkers.contains(checkerSub.getCheckerName())) {
+                    List<CheckerPropertyDataObj> checkerPropertyList = configurationService.getCheckerProperties(checkerPropFilter);
+                    for(CheckerPropertyDataObj checkerProp : checkerPropertyList){
+                        CheckerSubcategoryIdDataObj checkerSub = checkerProp.getCheckerSubcategoryId();
+                        if(!checkers.contains(checkerSub.getCheckerName())){
                             checkers.add(checkerSub.getCheckerName());
                         }
                     }
                 }
-            } catch (Exception e) {
+            } catch(Exception e) {
             }
             return checkers;
         }
 
         public void setCxxCheckers(String cxxCheckers) {
             this.cxxCheckers = Util.fixEmpty(cxxCheckers);
-            try {
-                this.cxxCheckers = IOUtils.toString(getClass()
-                        .getResourceAsStream("cxx-checkers.txt"));
-            } catch (IOException e) {
+            try{
+                this.cxxCheckers = IOUtils.toString(getClass().getResourceAsStream("cxx-checkers.txt"));
+            }catch(IOException e){
                 logger.info("Failed to load Cxx Checkers text file");
             }
 
@@ -397,7 +402,7 @@ public class CoverityPublisher extends Recorder {
 
         public void setCIMCxxCheckers(String cxxCheckers) {
             this.cxxCheckers = Util.fixEmpty(cxxCheckers);
-            this.cxxCheckers = StringUtils.join(getCimCxxCheckers(), '\n');
+            this.cxxCheckers = StringUtils.join(getCimCxxCheckers(),'\n');
 
         }
 
@@ -408,22 +413,19 @@ public class CoverityPublisher extends Recorder {
         public List<String> getCimCsharpCheckers() {
             List<String> checkers = new ArrayList<String>();
             try {
-                for (CIMInstance instance : instances) {
-                    ConfigurationService configurationService = instance
-                            .getConfigurationService();
+                for(CIMInstance instance :instances){
+                    ConfigurationService configurationService = instance.getConfigurationService();
                     CheckerPropertyFilterSpecDataObj checkerPropFilter = new CheckerPropertyFilterSpecDataObj();
                     checkerPropFilter.getDomainList().add("STATIC_CS");
-                    List<CheckerPropertyDataObj> checkerPropertyList = configurationService
-                            .getCheckerProperties(checkerPropFilter);
-                    for (CheckerPropertyDataObj checkerProp : checkerPropertyList) {
-                        CheckerSubcategoryIdDataObj checkerSub = checkerProp
-                                .getCheckerSubcategoryId();
-                        if (!checkers.contains(checkerSub.getCheckerName())) {
+                    List<CheckerPropertyDataObj> checkerPropertyList = configurationService.getCheckerProperties(checkerPropFilter);
+                    for(CheckerPropertyDataObj checkerProp : checkerPropertyList){
+                        CheckerSubcategoryIdDataObj checkerSub = checkerProp.getCheckerSubcategoryId();
+                        if(!checkers.contains(checkerSub.getCheckerName())){
                             checkers.add(checkerSub.getCheckerName());
                         }
                     }
                 }
-            } catch (Exception e) {
+            } catch(Exception e) {
             }
             return checkers;
         }
@@ -431,10 +433,9 @@ public class CoverityPublisher extends Recorder {
         public void setCsharpCheckers(String csharpCheckers) {
             this.csharpCheckers = Util.fixEmpty(csharpCheckers);
 
-            try {
-                this.csharpCheckers = IOUtils.toString(getClass()
-                        .getResourceAsStream("csharp-checkers.txt"));
-            } catch (IOException e) {
+            try{
+                this.csharpCheckers = IOUtils.toString(getClass().getResourceAsStream("csharp-checkers.txt"));
+            }catch(IOException e){
                 logger.info("Failed to load C sharp Checkers text file");
             }
         }
@@ -442,19 +443,16 @@ public class CoverityPublisher extends Recorder {
         public void setCimCsharpCheckers(String csharpCheckers) {
             this.csharpCheckers = Util.fixEmpty(csharpCheckers);
 
-            this.csharpCheckers = StringUtils
-                    .join(getCimCsharpCheckers(), '\n');
+            this.csharpCheckers = StringUtils.join(getCimCsharpCheckers(),'\n');
 
         }
 
         public String getHome(Node node, EnvVars environment) {
-            CoverityInstallation install = node.getNodeProperties().get(
-                    CoverityInstallation.class);
-            if (install != null) {
+            CoverityInstallation install = node.getNodeProperties().get(CoverityInstallation.class);
+            if(install != null) {
                 return install.forEnvironment(environment).getHome();
-            } else if (home != null) {
-                return new CoverityInstallation(home).forEnvironment(
-                        environment).getHome();
+            } else if(home != null) {
+                return new CoverityInstallation(home).forEnvironment(environment).getHome();
             } else {
                 return null;
             }
@@ -469,8 +467,8 @@ public class CoverityPublisher extends Recorder {
         }
 
         public CIMInstance getInstance(String name) {
-            for (CIMInstance instance : instances) {
-                if (instance.getName().equals(name)) {
+            for(CIMInstance instance : instances) {
+                if(instance.getName().equals(name)) {
                     return instance;
                 }
             }
@@ -482,30 +480,24 @@ public class CoverityPublisher extends Recorder {
             return "Coverity";
         }
 
-        public FormValidation doCheckInstance(@QueryParameter String host,
-                @QueryParameter int port, @QueryParameter boolean useSSL,
-                @QueryParameter String user, @QueryParameter String password,
-                @QueryParameter int dataPort) throws IOException {
-            return new CIMInstance("", host, port, user, password, useSSL,
-                    dataPort).doCheck();
+        public FormValidation doCheckInstance(@QueryParameter String host, @QueryParameter int port, @QueryParameter boolean useSSL, @QueryParameter String user, @QueryParameter String password, @QueryParameter int dataPort) throws IOException {
+            return new CIMInstance("", host, port, user, password, useSSL, dataPort).doCheck();
         }
 
-        public FormValidation doCheckCutOffDate(@QueryParameter String value)
-                throws FormException {
+        public FormValidation doCheckCutOffDate(@QueryParameter String value) throws FormException {
             try {
-                if (!StringUtils.isEmpty(value))
-                    new SimpleDateFormat("yyyy-MM-dd").parse(value);
+                if(!StringUtils.isEmpty(value)) new SimpleDateFormat("yyyy-MM-dd").parse(value);
                 return FormValidation.ok();
-            } catch (ParseException e) {
+            } catch(ParseException e) {
                 return FormValidation.error("yyyy-MM-dd expected");
             }
         }
 
         public ListBoxModel split(String string) {
             ListBoxModel result = new ListBoxModel();
-            for (String s : string.split("[\r\n]")) {
+            for(String s : string.split("[\r\n]")) {
                 s = Util.fixEmptyAndTrim(s);
-                if (s != null) {
+                if(s != null) {
                     result.add(s);
                 }
             }
@@ -514,21 +506,20 @@ public class CoverityPublisher extends Recorder {
 
         public Set<String> split2(String string) {
             Set<String> result = new TreeSet<String>();
-            for (String s : string.split("[\r\n]")) {
+            for(String s : string.split("[\r\n]")) {
                 s = Util.fixEmptyAndTrim(s);
-                if (s != null) {
+                if(s != null) {
                     result.add(s);
                 }
             }
             return result;
         }
-
         // Spliting checker strings into a usable list
         public List<String> split2List(String string) {
             List<String> result = new LinkedList<String>();
-            for (String s : string.split("[\r\n]")) {
+            for(String s : string.split("[\r\n]")) {
                 s = Util.fixEmptyAndTrim(s);
-                if (s != null) {
+                if(s != null) {
                     result.add(s);
                 }
             }
@@ -537,34 +528,29 @@ public class CoverityPublisher extends Recorder {
 
         public FormValidation doCheckDate(@QueryParameter String date) {
             try {
-                if (!StringUtils.isEmpty(date.trim())) {
+                if(!StringUtils.isEmpty(date.trim())) {
                     new SimpleDateFormat("yyyy-MM-dd").parse(date);
                 }
                 return FormValidation.ok();
-            } catch (ParseException e) {
-                return FormValidation
-                        .error("Date in yyyy-mm-dd format expected");
+            } catch(ParseException e) {
+                return FormValidation.error("Date in yyyy-mm-dd format expected");
             }
         }
 
         public String getCheckers(String language) {
-            if ("CXX".equals(language))
-                return cxxCheckers;
-            if ("JAVA".equals(language))
-                return javaCheckers;
-            if ("CSHARP".equals(language))
-                return csharpCheckers;
-            if ("ALL".equals(language))
-                return cxxCheckers + javaCheckers + csharpCheckers;
+            if("CXX".equals(language)) return cxxCheckers;
+            if("JAVA".equals(language)) return javaCheckers;
+            if("CSHARP".equals(language)) return csharpCheckers;
+            if("ALL".equals(language)) return cxxCheckers + javaCheckers + csharpCheckers;
             throw new IllegalArgumentException("Unknown language: " + language);
         }
 
         public void setCheckers(String language, Set<String> checkers) {
-            if ("CXX".equals(language)) {
+            if("CXX".equals(language)) {
                 cxxCheckers = join(checkers);
-            } else if ("JAVA".equals(language)) {
+            } else if("JAVA".equals(language)) {
                 javaCheckers = join(checkers);
-            } else if ("CSHARP".equals(language)) {
+            } else if("CSHARP".equals(language)) {
                 csharpCheckers = join(checkers);
             } else {
                 throw new IllegalArgumentException(language);
@@ -576,11 +562,11 @@ public class CoverityPublisher extends Recorder {
 
             Set<String> newCheckers = new TreeSet<String>();
             Set<String> c = new TreeSet<String>();
-            for (ListBoxModel.Option s : split(oldCheckers)) {
+            for(ListBoxModel.Option s : split(oldCheckers)) {
                 c.add(s.name);
             }
-            for (String s : checkers) {
-                if (c.add(s)) {
+            for(String s : checkers) {
+                if(c.add(s)) {
                     newCheckers.add(s);
                 }
             }
@@ -591,57 +577,44 @@ public class CoverityPublisher extends Recorder {
 
         private String join(Collection<String> c) {
             StringBuffer result = new StringBuffer();
-            for (String s : c)
-                result.append(s).append("\n");
+            for(String s : c) result.append(s).append("\n");
             return result.toString();
         }
 
         @Override
-        public Publisher newInstance(StaplerRequest req, JSONObject formData)
-                throws FormException {
+        public Publisher newInstance(StaplerRequest req, JSONObject formData) throws FormException {
             logger.info(formData.toString());
 
             String cutOffDate = Util.fixEmpty(req.getParameter("cutOffDate"));
             try {
-                if (cutOffDate != null)
-                    new SimpleDateFormat("yyyy-MM-dd").parse(cutOffDate);
-            } catch (ParseException e) {
-                throw new Descriptor.FormException("Could not parse date '"
-                        + cutOffDate + "', yyyy-MM-dd expected", "cutOffDate");
+                if(cutOffDate != null) new SimpleDateFormat("yyyy-MM-dd").parse(cutOffDate);
+            } catch(ParseException e) {
+                throw new Descriptor.FormException("Could not parse date '" + cutOffDate + "', yyyy-MM-dd expected", "cutOffDate");
             }
-            CoverityPublisher publisher = (CoverityPublisher) super
-                    .newInstance(req, formData);
+            CoverityPublisher publisher = (CoverityPublisher) super.newInstance(req, formData);
 
-            for (CIMStream current : publisher.getCimStreams()) {
-                CIMStream.DescriptorImpl currentDescriptor = ((CIMStream.DescriptorImpl) current
-                        .getDescriptor());
+            for(CIMStream current : publisher.getCimStreams()) {
+                CIMStream.DescriptorImpl currentDescriptor = ((CIMStream.DescriptorImpl) current.getDescriptor());
 
                 String cimInstance = current.getInstance();
 
                 try {
-                    if (current.isValid()) {
+                    if(current.isValid()) {
                         String language = publisher.getLanguage(current);
                         Set<String> allCheckers = split2(getCheckers(language));
-                        DefectFilters defectFilters = current
-                                .getDefectFilters();
+                        DefectFilters defectFilters = current.getDefectFilters();
 
-                        if (defectFilters != null) {
-                            defectFilters
-                                    .invertCheckers(
-                                            allCheckers,
-                                            toStrings(currentDescriptor
-                                                    .doFillClassificationDefectFilterItems(cimInstance)),
-                                            toStrings(currentDescriptor
-                                                    .doFillActionDefectFilterItems(cimInstance)),
-                                            toStrings(currentDescriptor
-                                                    .doFillSeveritiesDefectFilterItems(cimInstance)),
-                                            toStrings(currentDescriptor
-                                                    .doFillComponentDefectFilterItems(
-                                                            cimInstance,
-                                                            current.getStream())));
+                        if(defectFilters != null) {
+                            defectFilters.invertCheckers(
+                                    allCheckers,
+                                    toStrings(currentDescriptor.doFillClassificationDefectFilterItems(cimInstance)),
+                                    toStrings(currentDescriptor.doFillActionDefectFilterItems(cimInstance)),
+                                    toStrings(currentDescriptor.doFillSeveritiesDefectFilterItems(cimInstance)),
+                                    toStrings(currentDescriptor.doFillComponentDefectFilterItems(cimInstance, current.getStream()))
+                            );
                         }
                     }
-                } catch (Exception e) {
+                } catch(Exception e) {
                     throw new RuntimeException(e);
                 }
             }
@@ -649,16 +622,16 @@ public class CoverityPublisher extends Recorder {
         }
 
         private JSONObject getJSONClassObject(JSONObject o, String targetClass) {
-            // try old-style json format
+            //try old-style json format
             JSONObject jsonA = o.getJSONObject(getJsonSafeClassName());
-            if (jsonA == null || jsonA.toString().equals("null")) {
-                // new style json format
+            if(jsonA == null || jsonA.toString().equals("null")) {
+                //new style json format
                 JSON jsonB = (JSON) o.get("publisher");
-                if (jsonB.isArray()) {
+                if(jsonB.isArray()) {
                     JSONArray arr = (JSONArray) jsonB;
-                    for (Object i : arr) {
+                    for(Object i : arr) {
                         JSONObject ji = (JSONObject) i;
-                        if (targetClass.equals(ji.get("stapler-class"))) {
+                        if(targetClass.equals(ji.get("stapler-class"))) {
                             return ji;
                         }
                     }
@@ -672,14 +645,11 @@ public class CoverityPublisher extends Recorder {
             return null;
         }
 
-        public void doCheckConfig(StaplerRequest req, StaplerResponse rsp)
-                throws ServletException, IOException {
-            JSONObject json = getJSONClassObject(req.getSubmittedForm(),
-                    getId());
+        public void doCheckConfig(StaplerRequest req, StaplerResponse rsp) throws ServletException, IOException {
+            JSONObject json = getJSONClassObject(req.getSubmittedForm(), getId());
 
-            if (json != null && !json.isNullObject()) {
-                CoverityPublisher publisher = req.bindJSON(
-                        CoverityPublisher.class, json);
+            if(json != null && !json.isNullObject()) {
+                CoverityPublisher publisher = req.bindJSON(CoverityPublisher.class, json);
 
                 CheckConfig ccs = new CheckConfig(publisher, null, null, null);
                 ccs.check();
@@ -691,58 +661,42 @@ public class CoverityPublisher extends Recorder {
             }
         }
 
-        public void doDefectFiltersConfig(StaplerRequest req,
-                StaplerResponse rsp) throws IOException, ServletException {
+        public void doDefectFiltersConfig(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
             logger.info(req.getSubmittedForm().toString());
 
-            JSONObject json = getJSONClassObject(req.getSubmittedForm(),
-                    getId());
+            JSONObject json = getJSONClassObject(req.getSubmittedForm(), getId());
 
             CIMStream current = null;
             CIMStream.DescriptorImpl currentDescriptor = null;
-            if (json != null && !json.isNullObject()) {
-                CoverityPublisher publisher = req.bindJSON(
-                        CoverityPublisher.class, json);
+            if(json != null && !json.isNullObject()) {
+                CoverityPublisher publisher = req.bindJSON(CoverityPublisher.class, json);
                 String id = ((String[]) req.getParameterMap().get("id"))[0];
-                for (CIMStream cs : publisher.getCimStreams()) {
-                    if (id.equals(cs.getId())) {
+                for(CIMStream cs : publisher.getCimStreams()) {
+                    if(id.equals(cs.getId())) {
                         current = cs;
                     }
                 }
 
-                currentDescriptor = ((CIMStream.DescriptorImpl) current
-                        .getDescriptor());
+                currentDescriptor = ((CIMStream.DescriptorImpl) current.getDescriptor());
 
-                if (StringUtils.isEmpty(current.getInstance())
-                        || StringUtils.isEmpty(current.getStream())
-                        || StringUtils.isEmpty(current.getProject())) {
-                    // do nothing
+                if(StringUtils.isEmpty(current.getInstance()) || StringUtils.isEmpty(current.getStream()) || StringUtils.isEmpty(current.getProject())) {
+                    //do nothing
                 } else {
                     try {
                         String language = publisher.getLanguage(current);
 
                         Set<String> allCheckers = split2(getCheckers(language));
-                        DefectFilters defectFilters = current
-                                .getDefectFilters();
-                        if (defectFilters != null) {
-                            current.getDefectFilters()
-                                    .invertCheckers(
-                                            allCheckers,
-                                            toStrings(currentDescriptor
-                                                    .doFillClassificationDefectFilterItems(current
-                                                            .getInstance())),
-                                            toStrings(currentDescriptor
-                                                    .doFillActionDefectFilterItems(current
-                                                            .getInstance())),
-                                            toStrings(currentDescriptor
-                                                    .doFillSeveritiesDefectFilterItems(current
-                                                            .getInstance())),
-                                            toStrings(currentDescriptor
-                                                    .doFillComponentDefectFilterItems(
-                                                            current.getInstance(),
-                                                            current.getStream())));
+                        DefectFilters defectFilters = current.getDefectFilters();
+                        if(defectFilters != null) {
+                            current.getDefectFilters().invertCheckers(
+                                    allCheckers,
+                                    toStrings(currentDescriptor.doFillClassificationDefectFilterItems(current.getInstance())),
+                                    toStrings(currentDescriptor.doFillActionDefectFilterItems(current.getInstance())),
+                                    toStrings(currentDescriptor.doFillSeveritiesDefectFilterItems(current.getInstance())),
+                                    toStrings(currentDescriptor.doFillComponentDefectFilterItems(current.getInstance(), current.getStream()))
+                            );
                         }
-                    } catch (CovRemoteServiceException_Exception e) {
+                    } catch(CovRemoteServiceException_Exception e) {
                         throw new IOException(e);
                     }
                 }

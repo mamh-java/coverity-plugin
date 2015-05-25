@@ -11,6 +11,7 @@ import hudson.model.Executor;
 import hudson.model.Hudson;
 import hudson.model.Node;
 import hudson.model.Result;
+import hudson.EnvVars;
 import hudson.util.ArgumentListBuilder;
 import jenkins.plugins.coverity.CIMInstance;
 import jenkins.plugins.coverity.CIMStream;
@@ -20,6 +21,8 @@ import jenkins.plugins.coverity.CoverityLauncherDecorator;
 import jenkins.plugins.coverity.CoverityPublisher;
 import jenkins.plugins.coverity.CoverityTempDir;
 import jenkins.plugins.coverity.InvocationAssistance;
+import jenkins.plugins.coverity.CoverityUtils;
+
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -33,31 +36,35 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * FresnoToolHandler calls cov-analyze and cov-commit-defects in a way
- * consistent with all supported versions of Coverity analysis before fresno.
+ * FresnoToolHandler calls cov-analyze and cov-commit-defects in a way consistent with all supported versions of
+ * Coverity analysis before fresno.
  */
 public class PreFresnoToolHandler extends CoverityToolHandler {
     @Override
     public boolean perform(AbstractBuild<?, ?> build, Launcher launcher, BuildListener listener, CoverityPublisher publisher) throws InterruptedException, IOException, CovRemoteServiceException_Exception {
-        CoverityTempDir temp = build.getAction(CoverityTempDir.class);
 
-        listener.getLogger().println("\033[1;33m\033[1;33m[Coverity]\033[0m\033[0m temp dir is: " + temp.getTempDir().getRemote());
+        EnvVars envVars = build.getEnvironment(listener);
+
+        // Seting the new envVars after jenkins has modified its own
+        CoverityUtils.setEnvVars(envVars);
+
+        CoverityTempDir temp = build.getAction(CoverityTempDir.class);
 
         Node node = Executor.currentExecutor().getOwner().getNode();
         String home = publisher.getDescriptor().getHome(node, build.getEnvironment(listener));
         InvocationAssistance invocationAssistance = publisher.getInvocationAssistance();
-        if (invocationAssistance != null && invocationAssistance.getSaOverride() != null) {
-            home = new CoverityInstallation(invocationAssistance.getSaOverride()).forEnvironment(build.getEnvironment(listener)).getHome();
+        if(invocationAssistance != null && invocationAssistance.getSaOverride() != null) {
+            home = new CoverityInstallation(CoverityUtils.evaluateEnvVars(invocationAssistance.getSaOverride(), build, listener)).forEnvironment(build.getEnvironment(listener)).getHome();
         }
 
         // If WAR files specified, emit them prior to running analysis
         // Do not check for presence of Java streams or Java in build
-        String javaWarFile = invocationAssistance != null ? invocationAssistance.getJavaWarFile() : null;
-        if (javaWarFile != null) {
-            listener.getLogger().println("\033[1;33m\033[1;33m[Coverity]\033[0m\033[0m Specified WAR file '" + javaWarFile + "' in config");
+        String javaWarFile = invocationAssistance != null ? CoverityUtils.evaluateEnvVars(invocationAssistance.getJavaWarFile(), build, listener) : null;
+        if(javaWarFile != null) {
+            listener.getLogger().println("\033[1;33m[Coverity]\033[0m Specified WAR file '" + javaWarFile + "' in config");
 
             boolean result = covEmitWar(build, launcher, listener, home, temp, javaWarFile);
-            if (!result) {
+            if(!result) {
                 build.setResult(Result.FAILURE);
                 return false;
             }
@@ -65,46 +72,46 @@ public class PreFresnoToolHandler extends CoverityToolHandler {
 
         Set<String> analyzedLanguages = new HashSet<String>();
 
-        // run cov-analyze
-        for (CIMStream cimStream : publisher.getCimStreams()) {
+        //run cov-analyze
+        for(CIMStream cimStream : publisher.getCimStreams()) {
             CIMInstance cim = publisher.getDescriptor().getInstance(cimStream.getInstance());
 
             String language = null;
             try {
                 language = publisher.getLanguage(cimStream);
-            } catch (CovRemoteServiceException_Exception e) {
+            } catch(CovRemoteServiceException_Exception e) {
                 e.printStackTrace(listener.error("Error while retrieving stream information for " + cimStream.getStream()));
                 return false;
             }
 
-            if (invocationAssistance != null) {
+            if(invocationAssistance != null) {
                 InvocationAssistance effectiveIA = invocationAssistance;
-                if (cimStream.getInvocationAssistanceOverride() != null) {
+                if(cimStream.getInvocationAssistanceOverride() != null) {
                     effectiveIA = invocationAssistance.merge(cimStream.getInvocationAssistanceOverride());
                 }
 
                 try {
-                    if ("CSHARP".equals(language) && effectiveIA.getCsharpAssemblies() != null) {
+                    if("CSHARP".equals(language) && effectiveIA.getCsharpAssemblies() != null) {
                         String csharpAssembliesStr = effectiveIA.getCsharpAssemblies();
                         listener.getLogger().println("\033[1;33m[Coverity]\033[0m C# Project detected, assemblies to analyze are: " + csharpAssembliesStr);
                     }
 
                     String covAnalyze = null;
-                    if ("JAVA".equals(language)) {
+                    if("JAVA".equals(language)) {
                         covAnalyze = "cov-analyze-java";
-                    } else if ("CSHARP".equals(language)) {
+                    } else if("CSHARP".equals(language)) {
                         covAnalyze = "cov-analyze-cs";
                     } else {
                         covAnalyze = "cov-analyze";
                     }
 
-                    if (home != null) {
+                    if(home != null) {
                         covAnalyze = new FilePath(launcher.getChannel(), home).child("bin").child(covAnalyze).getRemote();
                     }
 
                     CoverityLauncherDecorator.SKIP.set(true);
 
-                    if (!analyzedLanguages.contains(language)) {
+                    if(!analyzedLanguages.contains(language)) {
                         List<String> cmd = new ArrayList<String>();
                         cmd.add(covAnalyze);
                         cmd.add("--dir");
@@ -114,37 +121,47 @@ public class PreFresnoToolHandler extends CoverityToolHandler {
                         cmd.add(build.getWorkspace().getRemote());
 
                         // For C# add the list of assemblies
-                        if ("CSHARP".equals(language)) {
+                        if("CSHARP".equals(language)) {
                             String csharpAssemblies = effectiveIA.getCsharpAssemblies();
-                            if (csharpAssemblies != null) {
+                            if(csharpAssemblies != null) {
                                 cmd.add(csharpAssemblies);
                             }
                         }
 
                         boolean csharpAutomaticAssemblies = invocationAssistance.getCsharpAutomaticAssemblies();
-                        if (csharpAutomaticAssemblies) {
+                        if(csharpAutomaticAssemblies) {
                             listener.getLogger().println("\033[1;33m[Coverity]\033[0m Searching for C# assemblies...");
                             File[] automaticAssemblies = findAssemblies(build.getWorkspace().getRemote());
 
-                            for (File assembly : automaticAssemblies) {
+                            for(File assembly : automaticAssemblies) {
                                 cmd.add(assembly.getAbsolutePath());
                             }
                         }
 
-                        listener.getLogger().println("\033[1;33m[Coverity]\033[0m cmd so far is: " + cmd.toString());
-                        if (effectiveIA.getAnalyzeArguments() != null) {
-                            for (String arg : Util.tokenize(effectiveIA.getAnalyzeArguments())) {
+
+                        if(effectiveIA.getAnalyzeArguments() != null) {
+                            for(String arg : effectiveIA.getAnalyzeArguments().split(" ")) {
                                 cmd.add(arg);
                             }
                         }
 
-                        int result = launcher.launch().cmds(new ArgumentListBuilder(cmd.toArray(new String[cmd.size()]))).pwd(build.getWorkspace()).stdout(listener).join();
+                         // Evaluation the cmd to replace any evironment variables 
+                        cmd = CoverityUtils.evaluateEnvVars(cmd, build, listener);
+
+                        listener.getLogger().println("\033[1;33m[Coverity]\033[0m cmd so far is: " + cmd.toString());
+
+
+                        int result = launcher.
+                                launch().
+                                cmds(new ArgumentListBuilder(cmd.toArray(new String[cmd.size()]))).
+                                pwd(build.getWorkspace()).
+                                stdout(listener).
+                                join();
 
                         analyzedLanguages.add(language);
 
-                        if (result != 0) {
+                        if(result != 0) {
                             listener.getLogger().println("\033[1;33m[Coverity]\033[0m " + covAnalyze + " returned " + result + ", aborting...");
-
                             build.setResult(Result.FAILURE);
                             return false;
                         }
@@ -158,40 +175,40 @@ public class PreFresnoToolHandler extends CoverityToolHandler {
         }
 
         // Import Microsoft Visual Studio Code Anaysis results
-        if (invocationAssistance != null) {
+        if(invocationAssistance != null) {
             boolean csharpMsvsca = invocationAssistance.getCsharpMsvsca();
-            String csharpMsvscaOutputFiles = invocationAssistance.getCsharpMsvscaOutputFiles();
-            if (analyzedLanguages.contains("CSHARP") && (csharpMsvsca || csharpMsvscaOutputFiles != null)) {
+            String csharpMsvscaOutputFiles = CoverityUtils.evaluateEnvVars(invocationAssistance.getCsharpMsvscaOutputFiles(), build, listener);
+            if(analyzedLanguages.contains("CSHARP") && (csharpMsvsca || csharpMsvscaOutputFiles != null)) {
                 boolean result = importMsvsca(build, launcher, listener, home, temp, csharpMsvsca, csharpMsvscaOutputFiles);
-                if (!result) {
+                if(!result) {
                     build.setResult(Result.FAILURE);
                     return false;
                 }
             }
         }
 
-        // run cov-commit-defects
-        for (CIMStream cimStream : publisher.getCimStreams()) {
+        //run cov-commit-defects
+        for(CIMStream cimStream : publisher.getCimStreams()) {
             CIMInstance cim = publisher.getDescriptor().getInstance(cimStream.getInstance());
 
             String language = null;
             try {
                 language = publisher.getLanguage(cimStream);
-            } catch (CovRemoteServiceException_Exception e) {
+            } catch(CovRemoteServiceException_Exception e) {
                 e.printStackTrace(listener.error("Error while retrieving stream information for " + cimStream.getStream()));
                 return false;
             }
 
-            if (invocationAssistance != null) {
+            if(invocationAssistance != null) {
                 InvocationAssistance effectiveIA = invocationAssistance;
-                if (cimStream.getInvocationAssistanceOverride() != null) {
+                if(cimStream.getInvocationAssistanceOverride() != null) {
                     effectiveIA = invocationAssistance.merge(cimStream.getInvocationAssistanceOverride());
                 }
 
                 try {
                     String covCommitDefects = "cov-commit-defects";
 
-                    if (home != null) {
+                    if(home != null) {
                         covCommitDefects = new FilePath(launcher.getChannel(), home).child("bin").child(covCommitDefects).getRemote();
                     }
 
@@ -204,8 +221,8 @@ public class PreFresnoToolHandler extends CoverityToolHandler {
                     cmd.add("--dir");
                     cmd.add(temp.getTempDir().getRemote());
 
-                    //cmd.add("--strip-path");
-                    //cmd.add(build.getWorkspace().getRemote());
+                    cmd.add("--strip-path");
+                    cmd.add(build.getWorkspace().getRemote());
 
                     cmd.add("--host");
                     cmd.add(cim.getHost());
@@ -216,17 +233,26 @@ public class PreFresnoToolHandler extends CoverityToolHandler {
                     cmd.add("--user");
                     cmd.add(cim.getUser());
 
-                    if (effectiveIA.getCommitArguments() != null) {
-                        for (String arg : Util.tokenize(effectiveIA.getCommitArguments())) {
+                    if(effectiveIA.getCommitArguments() != null) {
+                        for(String arg : Util.tokenize(effectiveIA.getCommitArguments())) {
                             cmd.add(arg);
                         }
                     }
 
+                    // Evaluation the cmd to replace any evironment variables 
+                    cmd = CoverityUtils.evaluateEnvVars(cmd, build, listener);
+
                     ArgumentListBuilder args = new ArgumentListBuilder(cmd.toArray(new String[cmd.size()]));
 
-                    int result = launcher.launch().cmds(args).envs(Collections.singletonMap("COVERITY_PASSPHRASE", cim.getPassword())).stdout(listener).stderr(listener.getLogger()).join();
+                    int result = launcher.
+                            launch().
+                            cmds(args).
+                            envs(Collections.singletonMap("COVERITY_PASSPHRASE", cim.getPassword())).
+                            stdout(listener).
+                            stderr(listener.getLogger()).
+                            join();
 
-                    if (result != 0) {
+                    if(result != 0) {
                         listener.getLogger().println("\033[1;33m[Coverity]\033[0m cov-commit-defects returned " + result + ", aborting...");
 
                         build.setResult(Result.FAILURE);
@@ -238,12 +264,11 @@ public class PreFresnoToolHandler extends CoverityToolHandler {
             }
         }
 
-        // keep if keepIntDir is set, or if the int dir is the default
-        // (keepIntDir is only useful if a custom int
-        // dir is set)
-        if (temp != null) {
-            // same as !(keepIntDir && !temp.def)
-            if (!publisher.isKeepIntDir() || temp.isDef()) {
+        //keep if keepIntDir is set, or if the int dir is the default (keepIntDir is only useful if a custom int
+        //dir is set)
+        if(temp != null) {
+            //same as !(keepIntDir && !temp.def)
+            if(!publisher.isKeepIntDir() || temp.isDef()) {
                 listener.getLogger().println("\033[1;33m[Coverity]\033[0m deleting intermediate directory");
                 temp.getTempDir().deleteRecursive();
             } else {
@@ -251,15 +276,15 @@ public class PreFresnoToolHandler extends CoverityToolHandler {
             }
         }
 
-        if (!publisher.isSkipFetchingDefects()) {
+        if(!publisher.isSkipFetchingDefects()) {
             Pattern snapshotPattern = Pattern.compile(".*New snapshot ID (\\d*) added.");
             BufferedReader reader = new BufferedReader(build.getLogReader());
             String line = null;
             List<Long> snapshotIds = new ArrayList<Long>();
             try {
-                while ((line = reader.readLine()) != null) {
+                while((line = reader.readLine()) != null) {
                     Matcher m = snapshotPattern.matcher(line);
-                    if (m.matches()) {
+                    if(m.matches()) {
                         snapshotIds.add(Long.parseLong(m.group(1)));
                     }
                 }
@@ -267,7 +292,7 @@ public class PreFresnoToolHandler extends CoverityToolHandler {
                 reader.close();
             }
 
-            if (snapshotIds.size() != publisher.getCimStreams().size()) {
+            if(snapshotIds.size() != publisher.getCimStreams().size()) {
                 listener.getLogger().println("\033[1;33m[Coverity]\033[0m Wrong number of snapshot IDs found in build log");
                 build.setResult(Result.FAILURE);
                 return false;
@@ -275,7 +300,7 @@ public class PreFresnoToolHandler extends CoverityToolHandler {
 
             listener.getLogger().println("\033[1;33m[Coverity]\033[0m Found snapshot IDs " + snapshotIds);
 
-            for (int i = 0; i < publisher.getCimStreams().size(); i++) {
+            for(int i = 0; i < publisher.getCimStreams().size(); i++) {
                 CIMStream cimStream = publisher.getCimStreams().get(i);
                 long snapshotId = snapshotIds.get(i);
                 try {
@@ -283,35 +308,47 @@ public class PreFresnoToolHandler extends CoverityToolHandler {
 
                     listener.getLogger().println("\033[1;33m[Coverity]\033[0m Fetching defects for stream " + cimStream.getStream());
 
-                    List<MergedDefectDataObj> defects = getDefectsForSnapshot(cim, cimStream, snapshotId, listener);
+                    List<MergedDefectDataObj> defects = getDefectsForSnapshot(cim, cimStream, snapshotId,listener);
 
                     Set<String> checkers = new HashSet<String>();
-                    for (MergedDefectDataObj defect : defects) {
+                    for(MergedDefectDataObj defect : defects) {
                         checkers.add(defect.getCheckerName());
                     }
                     publisher.getDescriptor().updateCheckers(publisher.getLanguage(cimStream), checkers);
 
                     List<Long> matchingDefects = new ArrayList<Long>();
 
-                    for (MergedDefectDataObj defect : defects) {
-                        // matchingDefects.add(defect.getCid());
-                        if (cimStream.getDefectFilters() == null) {
+                    cimStream.getDefectFilters().createImpactMap(cim);
+
+
+                    for(MergedDefectDataObj defect : defects) {
+                        //matchingDefects.add(defect.getCid());
+                        if(cimStream.getDefectFilters() == null) {
                             matchingDefects.add(defect.getCid());
                         } else {
-                            boolean match = cimStream.getDefectFilters().matches(defect, listener);
-                            if (match) {
+                            boolean match = cimStream.getDefectFilters().matches(defect,listener);
+                            if(match) {
                                 matchingDefects.add(defect.getCid());
                             }
                         }
                     }
 
-                    if (!matchingDefects.isEmpty()) {
-                        listener.getLogger().println("\033[1;33m[Coverity]\033[0m Found " + defects.size() + " defects matching all filters: " + matchingDefects);
-                        if (publisher.isFailBuild()) {
-                            if (build.getResult().isBetterThan(Result.FAILURE)) {
+                    if(!matchingDefects.isEmpty()) {
+                        listener.getLogger().println("\033[1;33m[Coverity]\033[0m Found " + matchingDefects.size() + " defects matching all filters: " + matchingDefects);
+                        if(publisher.isFailBuild()) {
+                            if(build.getResult().isBetterThan(Result.FAILURE)) {
                                 build.setResult(Result.FAILURE);
                             }
                         }
+
+                        // if the user wants to mark the build as unstable when defects are found, then we 
+                        // notify the publisher to do so.
+                        if(publisher.isUnstable()){
+                            publisher.setUnstableBuild(true);
+
+                        }
+
+
                     } else {
                         listener.getLogger().println("\033[1;33m[Coverity]\033[0m No defects matched all filters.");
                     }
@@ -319,22 +356,25 @@ public class PreFresnoToolHandler extends CoverityToolHandler {
                     CoverityBuildAction action = new CoverityBuildAction(build, cimStream.getProject(), cimStream.getStream(), cimStream.getInstance(), matchingDefects);
                     build.addAction(action);
 
-                    if (!matchingDefects.isEmpty() && publisher.getMailSender() != null) {
+                    if(!matchingDefects.isEmpty() && publisher.getMailSender() != null) {
                         publisher.getMailSender().execute(action, listener);
                     }
 
                     String rootUrl = Hudson.getInstance().getRootUrl();
-                    if (rootUrl != null) {
+                    if(rootUrl != null) {
                         listener.getLogger().println("Coverity details: " + Hudson.getInstance().getRootUrl() + build.getUrl() + action.getUrlName());
                     }
 
-                } catch (CovRemoteServiceException_Exception e) {
+
+                } catch(CovRemoteServiceException_Exception e) {
                     e.printStackTrace(listener.error("\033[1;33m[Coverity]\033[0m An error occurred while fetching defects"));
                     build.setResult(Result.FAILURE);
                     return false;
                 }
             }
         }
+        
+
         return true;
     }
 }
