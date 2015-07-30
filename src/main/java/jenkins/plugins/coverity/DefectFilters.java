@@ -12,9 +12,11 @@
 package jenkins.plugins.coverity;
 
 import com.coverity.ws.v6.*;
+import com.coverity.ws.v9.DefectStateAttributeValueDataObj;
 import hudson.Util;
 import hudson.model.Descriptor;
 import hudson.model.Hudson;
+import hudson.util.ListBoxModel;
 import org.apache.commons.lang.StringUtils;
 import org.kohsuke.stapler.DataBoundConstructor;
 import hudson.model.BuildListener;
@@ -241,6 +243,38 @@ public class DefectFilters {
                 (cutOffDate == null || defect.getFirstDetected().toGregorianCalendar().getTime().after(cutOffDate));
     }
 
+    public boolean matchesIndio(com.coverity.ws.v9.MergedDefectDataObj defect, BuildListener listener) {
+        String status = "";
+        String action = "";
+        String classification = "";
+        String severity = "";
+
+        List<DefectStateAttributeValueDataObj> listOfAttributes = defect.getDefectStateAttributeValues();
+        for(DefectStateAttributeValueDataObj defectAttribute : listOfAttributes){
+            if(defectAttribute.getAttributeDefinitionId().getName().equals("DefectStatus")){
+                status = defectAttribute.getAttributeValueId().getName();
+            }
+            if(defectAttribute.getAttributeDefinitionId().getName().equals("Action")){
+                action = defectAttribute.getAttributeValueId().getName();
+            }
+            if(defectAttribute.getAttributeDefinitionId().getName().equals("Classification")){
+                classification = defectAttribute.getAttributeValueId().getName();
+            }
+            if(defectAttribute.getAttributeDefinitionId().getName().equals("Severity")){
+                severity = defectAttribute.getAttributeValueId().getName();
+            }
+        }
+
+        return isActionSelected(action) &&
+                isClassificationSelected(classification) &&
+                isSeveritySelected(severity) &&
+                isComponentSelected(defect.getComponentName()) &&
+                isCheckerSelected(defect.getCheckerName()) &&
+                isImpactsSelected(defect.getDisplayImpact()) &&
+                Arrays.asList("New", "Triaged", "Various").contains(status) &&
+                (cutOffDate == null || defect.getFirstDetected().toGregorianCalendar().getTime().after(cutOffDate));
+    }
+
     @Override
     public boolean equals(Object o) {
         if(this == o) return true;
@@ -283,18 +317,37 @@ public class DefectFilters {
      * @throws CovRemoteServiceException_Exception
      */
     public void setCheckers(CIMInstance cimInstance,long streamId) throws IOException,CovRemoteServiceException_Exception{
-        StreamDataObj stream = cimInstance.getStream(String.valueOf(streamId));
-        String type = stream.getLanguage();
 
-        if("MIXED".equals(type)) {
-            type = "ALL";
-        }
-
+        String wsversion = cimInstance.getWsVersion();
         try {
-            String cs = getPublisherDescriptor().getCheckers(type);
-            checkers = getPublisherDescriptor().split2List(cs);
+            if(wsversion.equals("v9")){
+                // Retrieve all defects for a specific cim instance.
+                String cs = cimInstance.getCimInstanceCheckers();
+                checkers = getPublisherDescriptor().split2List(cs);
+            } else {
+                StreamDataObj stream = getStream(String.valueOf(streamId), cimInstance);
+                String type = stream.getLanguage();
+
+                if("MIXED".equals(type)) {
+                    type = "ALL";
+                }
+                String cs = getPublisherDescriptor().getCheckers(type);
+                checkers = getPublisherDescriptor().split2List(cs);
+            }
         } catch(Exception e) {
             checkers = new LinkedList<String>();
+        }
+    }
+
+    public StreamDataObj getStream(String streamId, CIMInstance cimInstance) throws IOException, CovRemoteServiceException_Exception {
+        StreamFilterSpecDataObj filter = new StreamFilterSpecDataObj();
+        filter.setNamePattern(streamId);
+
+        List<StreamDataObj> streams = cimInstance.getConfigurationService().getStreams(filter);
+        if(streams.isEmpty()) {
+            return null;
+        } else {
+            return streams.get(0);
         }
     }
 }

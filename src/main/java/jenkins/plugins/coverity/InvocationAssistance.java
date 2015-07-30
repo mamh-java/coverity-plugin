@@ -13,6 +13,7 @@ package jenkins.plugins.coverity;
 import hudson.EnvVars;
 import hudson.Util;
 import org.kohsuke.stapler.DataBoundConstructor;
+import net.sf.json.JSONObject;
 
 public class InvocationAssistance {
     private final String buildArguments;
@@ -26,6 +27,10 @@ public class InvocationAssistance {
     private final String saOverride;
     private EnvVars envVars;
 
+    private final boolean isUsingMisra;
+    private final String misraConfigFile;
+    private JSONObject misraMap;
+
     /**
      * Do not wrap any executables with these names with cov-build. Format is comma-separated list.
      */
@@ -36,8 +41,9 @@ public class InvocationAssistance {
      */
     private final String intermediateDir;
 
-    @DataBoundConstructor
-    public InvocationAssistance(String buildArguments, String analyzeArguments, String commitArguments, String intermediateDir, String csharpAssemblies, String javaWarFile, String csharpMsvscaOutputFiles, boolean csharpAutomaticAssemblies, boolean csharpMsvsca, String saOverride, String covBuildBlacklist) {
+    public InvocationAssistance(String buildArguments, String analyzeArguments, String commitArguments, String intermediateDir, boolean isUsingMisra, String misraConfigFile, String csharpAssemblies, String javaWarFile, String csharpMsvscaOutputFiles, boolean csharpAutomaticAssemblies, boolean csharpMsvsca, String saOverride, String covBuildBlacklist) {
+        this.isUsingMisra = isUsingMisra;
+        this.misraConfigFile = misraConfigFile;
         this.intermediateDir = Util.fixEmpty(intermediateDir);
         this.buildArguments = Util.fixEmpty(buildArguments);
         this.analyzeArguments = Util.fixEmpty(analyzeArguments);
@@ -50,6 +56,30 @@ public class InvocationAssistance {
         this.saOverride = Util.fixEmpty(saOverride);
         this.covBuildBlacklist = Util.fixEmpty(covBuildBlacklist);
     }
+
+    @DataBoundConstructor
+    public InvocationAssistance(String buildArguments, String analyzeArguments, String commitArguments, String intermediateDir, JSONObject misraMap, String csharpAssemblies, String javaWarFile, String csharpMsvscaOutputFiles, boolean csharpAutomaticAssemblies, boolean csharpMsvsca, String saOverride, String covBuildBlacklist) {
+        this.misraMap = misraMap;
+        if(this.misraMap != null) {
+            this.misraConfigFile = (String) misraMap.get("misraConfigFile");
+        } else {
+            this.misraConfigFile = null;
+        }
+        this.isUsingMisra = this.misraMap != null;
+        this.intermediateDir = Util.fixEmpty(intermediateDir);
+        this.buildArguments = Util.fixEmpty(buildArguments);
+        this.analyzeArguments = Util.fixEmpty(analyzeArguments);
+        this.commitArguments = Util.fixEmpty(commitArguments);
+        this.csharpAssemblies = Util.fixEmpty(csharpAssemblies);
+        this.javaWarFile = Util.fixEmpty(javaWarFile);
+        this.csharpMsvscaOutputFiles = Util.fixEmpty(csharpMsvscaOutputFiles);
+        this.csharpMsvsca = csharpMsvsca;
+        this.csharpAutomaticAssemblies = csharpAutomaticAssemblies;
+        this.saOverride = Util.fixEmpty(saOverride);
+        this.covBuildBlacklist = Util.fixEmpty(covBuildBlacklist);
+    }
+
+
 
     public String getBuildArguments() {
         return buildArguments;
@@ -93,6 +123,14 @@ public class InvocationAssistance {
 
     public String getCovBuildBlacklist() {
         return covBuildBlacklist;
+    }
+
+    public boolean getIsUsingMisra() {
+        return isUsingMisra;
+    }
+
+    public String getMisraConfigFile(){
+        return misraConfigFile;
     }
 
 
@@ -160,11 +198,37 @@ public class InvocationAssistance {
         boolean csharpAutomaticAssemblies = override.getCsharpAutomaticAssemblies();
         boolean csharpMsvsca = override.getCsharpMsvsca();
         String saOverride = override.getSaOverride() != null ? override.getSaOverride() : getSaOverride();
-        return new InvocationAssistance(buildArguments, analyzeArguments, commitArguments, intermediateDir, csharpAssemblies, javaWarFile, csharpMsvscaOutputFiles, csharpAutomaticAssemblies, csharpMsvsca, saOverride, covBuildBlacklist);
+        boolean isUsingMisra = override.getIsUsingMisra();
+        String misraConfigFile = override.getMisraConfigFile() != null ? override.getMisraConfigFile() : getMisraConfigFile();
+        return new InvocationAssistance(buildArguments, analyzeArguments, commitArguments, intermediateDir, isUsingMisra, misraConfigFile, csharpAssemblies, javaWarFile, csharpMsvscaOutputFiles, csharpAutomaticAssemblies, csharpMsvsca, saOverride, covBuildBlacklist);
     }
 
     // Sets the environment varibles for the project so that we can replace environment varibles
     public void setEnvVars(EnvVars environment){
         this.envVars = environment;
     }
+
+    public String checkIAConfig(){
+        boolean delim = true;
+        String errorText = "Errors with your \"Perform Coverity build/analyze/commit\" options: \n";
+        // Making sure they pick a test language
+        if(isUsingMisra){
+            if(misraConfigFile == null){
+                delim = false;
+            } else if (misraConfigFile.isEmpty()){
+                delim = false;
+            } else if (misraConfigFile.trim().isEmpty()){
+                delim = false;
+            }
+        }
+
+        if(delim){
+            errorText = "Pass";
+        } else {
+            errorText += "[Error] No MISRA configuration file was specified. \n";
+        }
+
+        return errorText;
+    }
+
 }

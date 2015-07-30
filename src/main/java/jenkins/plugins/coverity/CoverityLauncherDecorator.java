@@ -93,11 +93,28 @@ public class CoverityLauncherDecorator extends LauncherDecorator {
 
 
         FilePath temp;
+        boolean isUsingTA = false;
+        boolean isUsingMisra = false;
         if(ta != null){
             String taCheck = ta.checkTaConfig();
             if(!taCheck.equals("Pass")){
                 throw new RuntimeException(taCheck);
             }
+            isUsingTA = true;
+        }
+
+        if(ii != null){
+            String taCheck = ii.checkIAConfig();
+            if(!taCheck.equals("Pass")){
+                throw new RuntimeException(taCheck);
+            }
+            isUsingMisra = true;
+        }
+
+        if(isUsingTA && isUsingMisra){
+            String errorText = "Errors with your \"Perform Coverity build/analyze/commit\" options: \n " +
+                    "[Error] MISRA and Test Advisor options are not compatible. \n";
+            throw new RuntimeException(errorText);
         }
         
         if(scm != null){

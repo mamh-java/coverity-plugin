@@ -23,7 +23,7 @@
     </parent>
 
     <artifactId>coverity</artifactId>
-    <version>1.5.1-SNAPSHOT</version>
+    <version>1.5.3-SNAPSHOT</version>
     <packaging>hpi</packaging>
     <name>Coverity plugin</name>
     <url>http://wiki.jenkins-ci.org/display/JENKINS/Coverity+Plugin</url>
@@ -40,6 +40,11 @@
             <name>Ken Dang</name>
             <email>kdang@coverity.com</email>
         </developer>
+        <developer>
+            <id>frossi</id>
+            <name>Franco Rossi</name>
+            <email>frossi@coverity.com</email>
+        </developer>
     </developers>
 
     <distributionManagement>
@@ -50,9 +55,10 @@
     </distributionManagement>
 
     <scm>
-        <connection>scm:git:git://github.com/jenkinsci/coverity-plugin.git</connection>
-        <developerConnection>scm:git:git@github.com:jenkinsci/coverity-plugin.git</developerConnection>
-        <url>https://github.com/jenkinsci/coverity-plugin</url>
+      <connection>scm:git:ssh://github.com/jenkinsci/${project.artifactId}-plugin.git</connection>
+      <developerConnection>scm:git:ssh://git@github.com/jenkinsci/${project.artifactId}-plugin.git</developerConnection>
+      <url>https://github.com/jenkinsci/${project.artifactId}-plugin</url>
+      <tag>coverity-1.5.2</tag>
     </scm>
 
     <repositories>
@@ -66,6 +72,7 @@
         <plugins>
             <plugin>
                 <artifactId>maven-release-plugin</artifactId>
+                <version>2.5.2</version>
                 <configuration>
                     <goals>deploy</goals>
                 </configuration>
@@ -135,6 +142,16 @@
 			<version>1.4</version>
 			<scope>compile</scope>
 		</dependency>
+        <dependency>
+            <groupId>com.googlecode.json-simple</groupId>
+            <artifactId>json-simple</artifactId>
+            <version>1.1.1</version>
+        </dependency>
+        <dependency>
+            <groupId>com.googlecode.json-simple</groupId>
+            <artifactId>json-simple</artifactId>
+            <version>1.1.1</version>
+        </dependency>
     </dependencies>
 
 

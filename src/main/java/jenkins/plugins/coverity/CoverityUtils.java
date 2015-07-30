@@ -20,7 +20,10 @@ import hudson.model.TaskListener;
 import hudson.EnvVars;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 
 public class CoverityUtils {
@@ -46,7 +49,13 @@ public class CoverityUtils {
 			envVars = build.getEnvironment(listener);	
 			
 			for(String cmd : input){
-				output.add(envVars.expand(cmd));
+                /**
+                 * Fix bug 78168
+                 * After evaluating an environment variable, we need to check if more than one options where specified
+                 * on it. In order to do so, we use the command split(" ").
+                 */
+                cmd = envVars.expand(cmd).trim().replaceAll(" +", " ");
+                Collections.addAll(output, cmd.split(" "));
 			}
 		}catch(Exception e){
 			throw new RuntimeException("Error trying to evaluate Environment variables in: " + input.toString() );

@@ -11,22 +11,11 @@
  *******************************************************************************/
 package jenkins.plugins.coverity;
 
-import com.coverity.ws.v6.ConfigurationService;
-import com.coverity.ws.v6.ConfigurationServiceService;
-import com.coverity.ws.v6.CovRemoteServiceException_Exception;
-import com.coverity.ws.v6.DefectService;
-import com.coverity.ws.v6.DefectServiceService;
-import com.coverity.ws.v6.MergedDefectDataObj;
-import com.coverity.ws.v6.MergedDefectFilterSpecDataObj;
-import com.coverity.ws.v6.MergedDefectsPageDataObj;
-import com.coverity.ws.v6.PageSpecDataObj;
-import com.coverity.ws.v6.ProjectDataObj;
-import com.coverity.ws.v6.ProjectFilterSpecDataObj;
-import com.coverity.ws.v6.StreamDataObj;
-import com.coverity.ws.v6.StreamFilterSpecDataObj;
-import com.coverity.ws.v6.StreamIdDataObj;
+import com.coverity.ws.v6.*;
+import com.coverity.ws.v9.SnapshotScopeSpecDataObj;
 import hudson.model.Hudson;
 import hudson.util.FormValidation;
+import org.apache.commons.lang.StringUtils;
 import org.kohsuke.stapler.DataBoundConstructor;
 
 import javax.xml.namespace.QName;
@@ -42,6 +31,7 @@ import java.net.URL;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -52,9 +42,13 @@ import java.util.concurrent.ConcurrentHashMap;
 public class CIMInstance {
 
     public static final String COVERITY_V5_NAMESPACE = "http://ws.coverity.com/v6";
+    public static final String COVERITY_V9_NAMESPACE = "http://ws.coverity.com/v9";
 
     public static final String CONFIGURATION_SERVICE_V5_WSDL = "/ws/v6/configurationservice?wsdl";
     public static final String DEFECT_SERVICE_V5_WSDL = "/ws/v6/defectservice?wsdl";
+
+    public static final String CONFIGURATION_SERVICE_V9_WSDL = "/ws/v9/configurationservice?wsdl";
+    public static final String DEFECT_SERVICE_V9_WSDL = "/ws/v9/defectservice?wsdl";
 
     /**
      * Pattern to ignore streams - this is used to filter out internal DA streams, which are irrelevant to this plugin
@@ -99,12 +93,22 @@ public class CIMInstance {
     /**
      * cached webservice port for Defect service
      */
-    private transient DefectServiceService defectServiceService;
+    private transient com.coverity.ws.v6.DefectServiceService defectServiceService;
 
     /**
      * cached webservice port for Configuration service
      */
-    private transient ConfigurationServiceService configurationServiceService;
+    private transient com.coverity.ws.v6.ConfigurationServiceService configurationServiceService;
+
+    /**
+     * cached webservice port for Defect service for Indio
+     */
+    private transient com.coverity.ws.v9.DefectServiceService defectServiceServiceIndio;
+
+    /**
+     * cached webservice port for Configuration service for Indio
+     */
+    private transient com.coverity.ws.v9.ConfigurationServiceService configurationServiceServiceIndio;
 
     @DataBoundConstructor
     public CIMInstance(String name, String host, int port, String user, String password, boolean useSSL, int dataPort) {
@@ -156,12 +160,12 @@ public class CIMInstance {
     }
 
     /**
-     * Returns a Defect service client
+     * Returns a Defect service client using v6 web services.
      */
-    public DefectService getDefectService() throws IOException {
+    public com.coverity.ws.v6.DefectService getDefectService() throws IOException {
         synchronized(this) {
             if(defectServiceService == null) {
-                defectServiceService = new DefectServiceService(
+                defectServiceService = new com.coverity.ws.v6.DefectServiceService(
                         new URL(getURL(), DEFECT_SERVICE_V5_WSDL),
                         new QName(COVERITY_V5_NAMESPACE, "DefectServiceService"));
             }
@@ -169,7 +173,30 @@ public class CIMInstance {
 
         ClassLoader cl = Thread.currentThread().getContextClassLoader();
         try {
-            DefectService defectService = defectServiceService.getDefectServicePort();
+            com.coverity.ws.v6.DefectService defectService = defectServiceService.getDefectServicePort();
+            attachAuthenticationHandler((BindingProvider) defectService);
+
+            return defectService;
+        } finally {
+            Thread.currentThread().setContextClassLoader(cl);
+        }
+    }
+
+    /**
+     * Returns a Defect service client using v9 web services.
+     */
+    public com.coverity.ws.v9.DefectService getDefectServiceIndio() throws IOException {
+        synchronized(this) {
+            if(defectServiceServiceIndio == null) {
+                defectServiceServiceIndio = new com.coverity.ws.v9.DefectServiceService(
+                        new URL(getURL(), DEFECT_SERVICE_V9_WSDL),
+                        new QName(COVERITY_V9_NAMESPACE, "DefectServiceService"));
+            }
+        }
+
+        ClassLoader cl = Thread.currentThread().getContextClassLoader();
+        try {
+            com.coverity.ws.v9.DefectService defectService = defectServiceServiceIndio.getDefectServicePort();
             attachAuthenticationHandler((BindingProvider) defectService);
 
             return defectService;
@@ -186,7 +213,7 @@ public class CIMInstance {
     }
 
     /**
-     * Returns a Configuration service client
+     * Returns a Configuration service client using v6 web services.
      */
     public ConfigurationService getConfigurationService() throws IOException {
         synchronized(this) {
@@ -207,6 +234,72 @@ public class CIMInstance {
         } finally {
             Thread.currentThread().setContextClassLoader(cl);
         }
+    }
+
+    /**
+     * Returns a Configuration service client using v9 web services.
+     */
+    public com.coverity.ws.v9.ConfigurationService getConfigurationServiceIndio() throws IOException {
+        synchronized(this) {
+            if(configurationServiceServiceIndio == null) {
+                // Create a Web Services port to the server
+                configurationServiceServiceIndio = new com.coverity.ws.v9.ConfigurationServiceService(
+                        new URL(getURL(), CONFIGURATION_SERVICE_V9_WSDL),
+                        new QName(COVERITY_V9_NAMESPACE, "ConfigurationServiceService"));
+            }
+        }
+
+        ClassLoader cl = Thread.currentThread().getContextClassLoader();
+        try {
+            com.coverity.ws.v9.ConfigurationService configurationService = configurationServiceServiceIndio.getConfigurationServicePort();
+            attachAuthenticationHandler((BindingProvider) configurationService);
+
+            return configurationService;
+        } finally {
+            Thread.currentThread().setContextClassLoader(cl);
+        }
+    }
+
+    public String getWsVersion(){
+        com.coverity.ws.v9.ConfigurationService simpleWsCall = null;
+        // Set the default ws version value to v6.
+        String wsVersion = "v6";
+        try {
+            String testMessage = this.getConfigurationServiceIndio().getVersion().getExternalVersion();
+            if(testMessage != null){
+                wsVersion = "v9";
+            }
+        } catch (Exception e) {
+        }
+        return wsVersion;
+    }
+
+    public List<com.coverity.ws.v9.MergedDefectDataObj> getDefectsIndio(String streamId, List<Long> defectIds) throws IOException, com.coverity.ws.v9.CovRemoteServiceException_Exception {
+        com.coverity.ws.v9.MergedDefectFilterSpecDataObj filterSpec = new com.coverity.ws.v9.MergedDefectFilterSpecDataObj();
+        com.coverity.ws.v9.StreamIdDataObj stream = new com.coverity.ws.v9.StreamIdDataObj();
+        stream.setName(streamId);
+        List<com.coverity.ws.v9.StreamIdDataObj> streamList = new ArrayList<com.coverity.ws.v9.StreamIdDataObj>();
+        streamList.add(stream);
+        com.coverity.ws.v9.PageSpecDataObj pageSpec = new com.coverity.ws.v9.PageSpecDataObj();
+        pageSpec.setPageSize(2500);
+
+        SnapshotScopeSpecDataObj snapshotScopeSpecDataObj = new SnapshotScopeSpecDataObj();
+
+        List<com.coverity.ws.v9.MergedDefectDataObj> result = new ArrayList<com.coverity.ws.v9.MergedDefectDataObj>();
+        int defectCount = 0;
+        com.coverity.ws.v9.MergedDefectsPageDataObj defects = null;
+        do {
+            pageSpec.setStartIndex(defectCount);
+            defects = getDefectServiceIndio().getMergedDefectsForStreams(streamList, filterSpec, pageSpec, snapshotScopeSpecDataObj);
+            for(com.coverity.ws.v9.MergedDefectDataObj defect : defects.getMergedDefects()) {
+                if(defectIds.contains(defect.getCid())) {
+                    result.add(defect);
+                }
+            }
+            defectCount += defects.getMergedDefects().size();
+        } while(defectCount < defects.getTotalNumberOfRecords());
+
+        return result;
     }
 
     public List<MergedDefectDataObj> getDefects(String streamId, List<Long> defectIds) throws IOException, CovRemoteServiceException_Exception {
@@ -297,15 +390,37 @@ public class CIMInstance {
         }
     }
 
+    public com.coverity.ws.v9.StreamDataObj getStreamIndio(String streamId) throws IOException, com.coverity.ws.v9.CovRemoteServiceException_Exception {
+        com.coverity.ws.v9.StreamFilterSpecDataObj filter = new com.coverity.ws.v9.StreamFilterSpecDataObj();
+        filter.setNamePattern(streamId);
+
+        List<com.coverity.ws.v9.StreamDataObj> streams = getConfigurationServiceIndio().getStreams(filter);
+        if(streams.isEmpty()) {
+            return null;
+        } else {
+            return streams.get(0);
+        }
+    }
+
     public FormValidation doCheck() throws IOException {
         try {
             URL url = getURL();
-            int responseCode = getURLResponseCode(new URL(url, CONFIGURATION_SERVICE_V5_WSDL));
-            if(responseCode != 200) {
-                return FormValidation.error("Connected successfully, but Coverity web services were not detected.");
+            // Fix:77968 by using different wsdl for v9 and v6.
+            if(this.getWsVersion().equals("v9")){
+                int responseCode = getURLResponseCode(new URL(url, CONFIGURATION_SERVICE_V9_WSDL));
+                if(responseCode != 200) {
+                    return FormValidation.error("Connected successfully, but Coverity web services were not detected.");
+                }
+                getConfigurationServiceIndio().getServerTime();
+                return FormValidation.ok("Successfully connected to the instance.");
+            } else {
+                int responseCode = getURLResponseCode(new URL(url, CONFIGURATION_SERVICE_V5_WSDL));
+                if(responseCode != 200) {
+                    return FormValidation.error("Connected successfully, but Coverity web services were not detected.");
+                }
+                getConfigurationService().getServerTime();
+                return FormValidation.ok("Successfully connected to the instance.");
             }
-            getConfigurationService().getServerTime();
-            return FormValidation.ok("Successfully connected to the instance.");
         } catch(UnknownHostException e) {
             return FormValidation.error("Host name unknown");
         } catch(ConnectException e) {
@@ -343,6 +458,31 @@ public class CIMInstance {
             return 404;
         }
 
+    }
+
+    public String getCimInstanceCheckers() {
+        List<String> checkers = new ArrayList<String>();
+
+        if(this.getWsVersion().equals("v9")){
+            try {
+                checkers.addAll(this.getConfigurationServiceIndio().getCheckerNames());
+            } catch(Exception e) {
+            }
+        } else{
+            try {
+                CheckerPropertyFilterSpecDataObj checkerPropFilter = new CheckerPropertyFilterSpecDataObj();
+                List<CheckerPropertyDataObj> checkerPropertyList = this.getConfigurationService().getCheckerProperties(checkerPropFilter);
+                for(CheckerPropertyDataObj checkerProp : checkerPropertyList){
+                    CheckerSubcategoryIdDataObj checkerSub = checkerProp.getCheckerSubcategoryId();
+                    if(!checkers.contains(checkerSub.getCheckerName())){
+                        checkers.add(checkerSub.getCheckerName());
+                    }
+                }
+            } catch(Exception e) {
+            }
+        }
+        Collections.sort(checkers);
+        return StringUtils.join(checkers, '\n');
     }
 
 }

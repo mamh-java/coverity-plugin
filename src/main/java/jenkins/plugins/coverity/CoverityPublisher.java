@@ -12,6 +12,8 @@
 package jenkins.plugins.coverity;
 
 import com.coverity.ws.v6.*;
+import com.coverity.ws.v9.CovRemoteServiceException_Exception;
+import com.coverity.ws.v9.ConfigurationService;
 import hudson.EnvVars;
 import hudson.Extension;
 import hudson.Launcher;
@@ -268,13 +270,27 @@ public class CoverityPublisher extends Recorder {
                 build.setResult(Result.UNSTABLE);
             }
             return true;
-        } catch(CovRemoteServiceException_Exception e){
+        } catch(com.coverity.ws.v6.CovRemoteServiceException_Exception e){
+            throw new InterruptedException("Cov Remote Service Error " + e.getMessage());
+        } catch(com.coverity.ws.v9.CovRemoteServiceException_Exception e){
             throw new InterruptedException("Cov Remote Service Error " + e.getMessage());
         }
     }
 
-    public String getLanguage(CIMStream cimStream) throws IOException, CovRemoteServiceException_Exception {
-        String domain = getDescriptor().getInstance(cimStream.getInstance()).getStream(cimStream.getStream()).getLanguage();
+    public StreamDataObj getStream(String streamId, CIMInstance cimInstance) throws IOException, com.coverity.ws.v6.CovRemoteServiceException_Exception {
+        StreamFilterSpecDataObj filter = new StreamFilterSpecDataObj();
+        filter.setNamePattern(streamId);
+
+        List<StreamDataObj> streams = cimInstance.getConfigurationService().getStreams(filter);
+        if(streams.isEmpty()) {
+            return null;
+        } else {
+            return streams.get(0);
+        }
+    }
+
+    public String getLanguage(CIMStream cimStream) throws IOException, com.coverity.ws.v6.CovRemoteServiceException_Exception {
+        String domain = getStream(cimStream.getStream(), getDescriptor().getInstance(cimStream.getInstance())).getLanguage();
         return "MIXED".equals(domain) ? cimStream.getLanguage() : domain;
     }
 
@@ -290,6 +306,11 @@ public class CoverityPublisher extends Recorder {
         private String javaCheckers;
         private String cxxCheckers;
         private String csharpCheckers;
+        /**
+         * This field contains all checkers on txt files and on CIM (obtained via the ws v9 call getCheckersnames() ).
+         * It's populated during DescriptorImpl instantiation.
+         */
+        private String allCheckers;
 
         public DescriptorImpl() {
             super(CoverityPublisher.class);
@@ -298,6 +319,7 @@ public class CoverityPublisher extends Recorder {
             setJavaCheckers(javaCheckers);
             setCxxCheckers(cxxCheckers);
             setCsharpCheckers(csharpCheckers);
+            setAllCheckers();
         }
 
         public static List<String> toStrings(ListBoxModel list) {
@@ -336,7 +358,7 @@ public class CoverityPublisher extends Recorder {
             List<String> checkers = new ArrayList<String>();
             try {
                 for(CIMInstance instance :instances){
-                    ConfigurationService configurationService = instance.getConfigurationService();
+                    com.coverity.ws.v6.ConfigurationService configurationService = instance.getConfigurationService();
                     CheckerPropertyFilterSpecDataObj checkerPropFilter = new CheckerPropertyFilterSpecDataObj();
                     checkerPropFilter.getDomainList().add("STATIC_JAVA");
                     List<CheckerPropertyDataObj> checkerPropertyList = configurationService.getCheckerProperties(checkerPropFilter);
@@ -370,11 +392,44 @@ public class CoverityPublisher extends Recorder {
             return cxxCheckers;
         }
 
+        /**
+         * Gets all checkers from CIM.
+         * This method will use getCheckerNames() on v9 and getCheckerProperties() (with no filter) on v6.
+         */
+        public List<String> getAllCimCheckers() {
+            List<String> checkers = new ArrayList<String>();
+            for(CIMInstance instance :instances){
+                if(instance.getWsVersion().equals("v9")){
+                    try {
+                        checkers.addAll(instance.getConfigurationServiceIndio().getCheckerNames());
+                    } catch(Exception e) {
+                    }
+                } else{
+                    try {
+                        CheckerPropertyFilterSpecDataObj checkerPropFilter = new CheckerPropertyFilterSpecDataObj();
+                        List<CheckerPropertyDataObj> checkerPropertyList = instance.getConfigurationService().getCheckerProperties(checkerPropFilter);
+                        for(CheckerPropertyDataObj checkerProp : checkerPropertyList){
+                            CheckerSubcategoryIdDataObj checkerSub = checkerProp.getCheckerSubcategoryId();
+                            if(!checkers.contains(checkerSub.getCheckerName())){
+                                checkers.add(checkerSub.getCheckerName());
+                            }
+                        }
+                    } catch(Exception e) {
+                    }
+                }
+            }
+            return checkers;
+        }
+
+        public String getAllCheckers() {
+            return allCheckers;
+        }
+
         public List<String> getCimCxxCheckers() {
             List<String> checkers = new ArrayList<String>();
             try {
                 for(CIMInstance instance :instances){
-                    ConfigurationService configurationService = instance.getConfigurationService();
+                    com.coverity.ws.v6.ConfigurationService configurationService = instance.getConfigurationService();
                     CheckerPropertyFilterSpecDataObj checkerPropFilter = new CheckerPropertyFilterSpecDataObj();
                     checkerPropFilter.getDomainList().add("STATIC_C");
                     List<CheckerPropertyDataObj> checkerPropertyList = configurationService.getCheckerProperties(checkerPropFilter);
@@ -400,10 +455,30 @@ public class CoverityPublisher extends Recorder {
 
         }
 
+        /**
+         * Adds to allCheckers all checkers from CIM plus the checkers on csharp-checkers.txt, cxx-checkers.txt, and
+         * java-checkers.txt
+         */
+        public void setAllCheckers() {
+            setAllCIMCheckers("");
+            Set<String> repeatedCheckers = new HashSet<String>(split2(allCheckers + cxxCheckers + csharpCheckers + javaCheckers));
+            List<String> checkersWithoutRepetitions = new ArrayList<String>(repeatedCheckers);
+            Collections.sort(checkersWithoutRepetitions);
+            this.allCheckers = StringUtils.join(checkersWithoutRepetitions,'\n');
+        }
+
         public void setCIMCxxCheckers(String cxxCheckers) {
             this.cxxCheckers = Util.fixEmpty(cxxCheckers);
             this.cxxCheckers = StringUtils.join(getCimCxxCheckers(),'\n');
 
+        }
+
+        /**
+         * Adds to allCheckers all checkers from CIM.
+         */
+        public void setAllCIMCheckers(String allCheckers) {
+            this.allCheckers = Util.fixEmpty(allCheckers);
+            this.allCheckers = StringUtils.join(getAllCimCheckers(), '\n');
         }
 
         public String getCsharpCheckers() {
@@ -414,7 +489,7 @@ public class CoverityPublisher extends Recorder {
             List<String> checkers = new ArrayList<String>();
             try {
                 for(CIMInstance instance :instances){
-                    ConfigurationService configurationService = instance.getConfigurationService();
+                    com.coverity.ws.v6.ConfigurationService configurationService = instance.getConfigurationService();
                     CheckerPropertyFilterSpecDataObj checkerPropFilter = new CheckerPropertyFilterSpecDataObj();
                     checkerPropFilter.getDomainList().add("STATIC_CS");
                     List<CheckerPropertyDataObj> checkerPropertyList = configurationService.getCheckerProperties(checkerPropFilter);
@@ -600,18 +675,32 @@ public class CoverityPublisher extends Recorder {
 
                 try {
                     if(current.isValid()) {
-                        String language = publisher.getLanguage(current);
-                        Set<String> allCheckers = split2(getCheckers(language));
-                        DefectFilters defectFilters = current.getDefectFilters();
+                        if(getInstance(cimInstance).getWsVersion().equals("v9")){
+                            Set<String> allCheckers = split2(getInstance(current.getInstance()).getCimInstanceCheckers());
+                            DefectFilters defectFilters = current.getDefectFilters();
+                            if(defectFilters != null) {
+                                defectFilters.invertCheckers(
+                                        allCheckers,
+                                        toStrings(currentDescriptor.doFillClassificationDefectFilterItems(cimInstance)),
+                                        toStrings(currentDescriptor.doFillActionDefectFilterItems(cimInstance)),
+                                        toStrings(currentDescriptor.doFillSeveritiesDefectFilterItems(cimInstance)),
+                                        toStrings(currentDescriptor.doFillComponentDefectFilterItems(cimInstance, current.getStream()))
+                                );
+                            }
+                        } else {
+                            String language = publisher.getLanguage(current);
+                            Set<String> allCheckers = split2(getCheckers(language));
+                            DefectFilters defectFilters = current.getDefectFilters();
 
-                        if(defectFilters != null) {
-                            defectFilters.invertCheckers(
-                                    allCheckers,
-                                    toStrings(currentDescriptor.doFillClassificationDefectFilterItems(cimInstance)),
-                                    toStrings(currentDescriptor.doFillActionDefectFilterItems(cimInstance)),
-                                    toStrings(currentDescriptor.doFillSeveritiesDefectFilterItems(cimInstance)),
-                                    toStrings(currentDescriptor.doFillComponentDefectFilterItems(cimInstance, current.getStream()))
-                            );
+                            if(defectFilters != null) {
+                                defectFilters.invertCheckers(
+                                        allCheckers,
+                                        toStrings(currentDescriptor.doFillClassificationDefectFilterItems(cimInstance)),
+                                        toStrings(currentDescriptor.doFillActionDefectFilterItems(cimInstance)),
+                                        toStrings(currentDescriptor.doFillSeveritiesDefectFilterItems(cimInstance)),
+                                        toStrings(currentDescriptor.doFillComponentDefectFilterItems(cimInstance, current.getStream()))
+                                );
+                            }
                         }
                     }
                 } catch(Exception e) {
@@ -661,7 +750,7 @@ public class CoverityPublisher extends Recorder {
             }
         }
 
-        public void doDefectFiltersConfig(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
+        public void doDefectFiltersConfig(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException, com.coverity.ws.v6.CovRemoteServiceException_Exception {
             logger.info(req.getSubmittedForm().toString());
 
             JSONObject json = getJSONClassObject(req.getSubmittedForm(), getId());
@@ -682,22 +771,40 @@ public class CoverityPublisher extends Recorder {
                 if(StringUtils.isEmpty(current.getInstance()) || StringUtils.isEmpty(current.getStream()) || StringUtils.isEmpty(current.getProject())) {
                     //do nothing
                 } else {
-                    try {
-                        String language = publisher.getLanguage(current);
-
-                        Set<String> allCheckers = split2(getCheckers(language));
+                    if(getInstance(current.getInstance()).getWsVersion().equals("v9")){
+                        Set<String> allCheckers = split2(getInstance(current.getInstance()).getCimInstanceCheckers());
                         DefectFilters defectFilters = current.getDefectFilters();
                         if(defectFilters != null) {
-                            current.getDefectFilters().invertCheckers(
-                                    allCheckers,
-                                    toStrings(currentDescriptor.doFillClassificationDefectFilterItems(current.getInstance())),
-                                    toStrings(currentDescriptor.doFillActionDefectFilterItems(current.getInstance())),
-                                    toStrings(currentDescriptor.doFillSeveritiesDefectFilterItems(current.getInstance())),
-                                    toStrings(currentDescriptor.doFillComponentDefectFilterItems(current.getInstance(), current.getStream()))
-                            );
+                            try {
+                                current.getDefectFilters().invertCheckers(
+                                        allCheckers,
+                                        toStrings(currentDescriptor.doFillClassificationDefectFilterItems(current.getInstance())),
+                                        toStrings(currentDescriptor.doFillActionDefectFilterItems(current.getInstance())),
+                                        toStrings(currentDescriptor.doFillSeveritiesDefectFilterItems(current.getInstance())),
+                                        toStrings(currentDescriptor.doFillComponentDefectFilterItems(current.getInstance(), current.getStream()))
+                                );
+                            } catch (CovRemoteServiceException_Exception e) {
+                                throw new IOException(e);
+                            }
                         }
-                    } catch(CovRemoteServiceException_Exception e) {
-                        throw new IOException(e);
+                    } else {
+                        try {
+                            String language = publisher.getLanguage(current);
+
+                            Set<String> allCheckers = split2(getCheckers(language));
+                            DefectFilters defectFilters = current.getDefectFilters();
+                            if(defectFilters != null) {
+                                current.getDefectFilters().invertCheckers(
+                                        allCheckers,
+                                        toStrings(currentDescriptor.doFillClassificationDefectFilterItems(current.getInstance())),
+                                        toStrings(currentDescriptor.doFillActionDefectFilterItems(current.getInstance())),
+                                        toStrings(currentDescriptor.doFillSeveritiesDefectFilterItems(current.getInstance())),
+                                        toStrings(currentDescriptor.doFillComponentDefectFilterItems(current.getInstance(), current.getStream()))
+                                );
+                            }
+                        } catch(CovRemoteServiceException_Exception e) {
+                            throw new IOException(e);
+                        }
                     }
                 }
                 req.setAttribute("descriptor", currentDescriptor);
